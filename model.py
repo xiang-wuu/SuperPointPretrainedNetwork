@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from trt_infer import build_engine, infer
 import pycuda.driver as cuda
+import time
 
 
 class SuperPointNet(torch.nn.Module):
@@ -89,6 +90,9 @@ class SuperPointFrontend(object):
         self.engine = None
         self.context = None
         self.weights_path = weights_path
+        self.ms_count = 0
+        self.mean_count = 0
+        self.avg_ms = 0
 
         # Load the network in inference mode.
         if ".pth" in weights_path:
@@ -192,16 +196,24 @@ class SuperPointFrontend(object):
         inp = torch.from_numpy(inp)
         inp = torch.autograd.Variable(inp).view(1, 1, H, W)
         outs = None
+        t1 = time.time()
         # Forward pass of network.
         if ".pth" in self.weights_path:
             if self.cudas:
+                torch.cuda.synchronize()
                 inp = inp.cuda()
             outs = self.net.forward(inp)
         elif ".engine" in self.weights_path:
             semi, desc = infer(self.engine, self.context, np.array(inp))
             outs = torch.tensor(semi).unsqueeze(
                 0), torch.tensor(desc).unsqueeze(0)
+        t2 = time.time()
+        self.ms_count += 1
 
+        self.infer_time = t2 - t1
+        self.mean_count = self.infer_time + self.mean_count
+        self.avg_ms = self.mean_count / self.ms_count
+        print('Done. (%.3fs)'% self.avg_ms)
         dn = torch.norm(outs[1], p=2, dim=1)  # Compute the norm.
         # Divide by norm to normalize.
         desc = outs[1].div(torch.unsqueeze(dn, 1))
